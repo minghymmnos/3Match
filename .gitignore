@@ -34,6 +34,9 @@
 # Jetbrains Rider personal-layer settings
 *.DotSettings.user
 
+# Workbuddy directory
+.workbuddy/
+
 # Visual Studio cache directory
 .vs/
 
