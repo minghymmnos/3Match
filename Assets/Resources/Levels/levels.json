@@ -1,0 +1,350 @@
+{
+  "levels": [
+    {
+      "id": 1,
+      "steps": 20,
+      "difficulty": "NORMAL",
+      "rewardGold": 110,
+      "goals": [
+        {
+          "type": "collect",
+          "color": "rose",
+          "count": 12
+        }
+      ],
+      "crates": [],
+      "ices": []
+    },
+    {
+      "id": 2,
+      "steps": 20,
+      "difficulty": "NORMAL",
+      "rewardGold": 110,
+      "goals": [
+        {
+          "type": "collect",
+          "color": "drop",
+          "count": 14
+        }
+      ],
+      "crates": [],
+      "ices": []
+    },
+    {
+      "id": 3,
+      "steps": 22,
+      "difficulty": "NORMAL",
+      "rewardGold": 120,
+      "goals": [
+        {
+          "type": "collect",
+          "color": "rose",
+          "count": 10
+        },
+        {
+          "type": "collect",
+          "color": "star",
+          "count": 10
+        }
+      ],
+      "crates": [],
+      "ices": []
+    },
+    {
+      "id": 4,
+      "steps": 22,
+      "difficulty": "NORMAL",
+      "rewardGold": 120,
+      "goals": [
+        {
+          "type": "collect",
+          "color": "leaf",
+          "count": 16
+        }
+      ],
+      "crates": [],
+      "ices": []
+    },
+    {
+      "id": 5,
+      "steps": 24,
+      "difficulty": "NORMAL",
+      "rewardGold": 130,
+      "goals": [
+        {
+          "type": "collect",
+          "color": "drop",
+          "count": 12
+        },
+        {
+          "type": "collect",
+          "color": "orange",
+          "count": 12
+        }
+      ],
+      "crates": [],
+      "ices": []
+    },
+    {
+      "id": 6,
+      "steps": 24,
+      "difficulty": "NORMAL",
+      "rewardGold": 130,
+      "goals": [
+        {
+          "type": "clear",
+          "target": "crate",
+          "count": 4
+        }
+      ],
+      "crates": [
+        {
+          "x": 2,
+          "y": 4,
+          "hp": 1
+        },
+        {
+          "x": 3,
+          "y": 4,
+          "hp": 1
+        },
+        {
+          "x": 4,
+          "y": 4,
+          "hp": 1
+        },
+        {
+          "x": 3,
+          "y": 3,
+          "hp": 1
+        }
+      ],
+      "ices": []
+    },
+    {
+      "id": 7,
+      "steps": 24,
+      "difficulty": "NORMAL",
+      "rewardGold": 140,
+      "goals": [
+        {
+          "type": "clear",
+          "target": "ice",
+          "count": 6
+        }
+      ],
+      "crates": [],
+      "ices": [
+        {
+          "x": 1,
+          "y": 3,
+          "hp": 1
+        },
+        {
+          "x": 2,
+          "y": 3,
+          "hp": 1
+        },
+        {
+          "x": 3,
+          "y": 3,
+          "hp": 1
+        },
+        {
+          "x": 4,
+          "y": 3,
+          "hp": 1
+        },
+        {
+          "x": 5,
+          "y": 3,
+          "hp": 1
+        },
+        {
+          "x": 3,
+          "y": 5,
+          "hp": 1
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "steps": 26,
+      "difficulty": "HARD",
+      "rewardGold": 240,
+      "goals": [
+        {
+          "type": "clear",
+          "target": "crate",
+          "count": 4
+        },
+        {
+          "type": "collect",
+          "color": "star",
+          "count": 12
+        }
+      ],
+      "crates": [
+        {
+          "x": 2,
+          "y": 4,
+          "hp": 1
+        },
+        {
+          "x": 3,
+          "y": 4,
+          "hp": 1
+        },
+        {
+          "x": 4,
+          "y": 4,
+          "hp": 1
+        },
+        {
+          "x": 3,
+          "y": 5,
+          "hp": 1
+        }
+      ],
+      "ices": []
+    },
+    {
+      "id": 9,
+      "steps": 28,
+      "difficulty": "NORMAL",
+      "rewardGold": 150,
+      "goals": [
+        {
+          "type": "clear",
+          "target": "ice",
+          "count": 8
+        },
+        {
+          "type": "collect",
+          "color": "gem",
+          "count": 10
+        }
+      ],
+      "crates": [],
+      "ices": [
+        {
+          "x": 1,
+          "y": 2,
+          "hp": 2
+        },
+        {
+          "x": 3,
+          "y": 2,
+          "hp": 2
+        },
+        {
+          "x": 5,
+          "y": 2,
+          "hp": 2
+        },
+        {
+          "x": 0,
+          "y": 3,
+          "hp": 2
+        },
+        {
+          "x": 6,
+          "y": 3,
+          "hp": 2
+        },
+        {
+          "x": 2,
+          "y": 4,
+          "hp": 2
+        },
+        {
+          "x": 4,
+          "y": 4,
+          "hp": 2
+        },
+        {
+          "x": 3,
+          "y": 6,
+          "hp": 2
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "steps": 30,
+      "difficulty": "HARD",
+      "rewardGold": 240,
+      "goals": [
+        {
+          "type": "clear",
+          "target": "crate",
+          "count": 6
+        },
+        {
+          "type": "clear",
+          "target": "ice",
+          "count": 4
+        },
+        {
+          "type": "collect",
+          "color": "rose",
+          "count": 10
+        }
+      ],
+      "crates": [
+        {
+          "x": 1,
+          "y": 4,
+          "hp": 1
+        },
+        {
+          "x": 2,
+          "y": 4,
+          "hp": 1
+        },
+        {
+          "x": 4,
+          "y": 4,
+          "hp": 1
+        },
+        {
+          "x": 5,
+          "y": 4,
+          "hp": 1
+        },
+        {
+          "x": 3,
+          "y": 5,
+          "hp": 1
+        },
+        {
+          "x": 3,
+          "y": 3,
+          "hp": 1
+        }
+      ],
+      "ices": [
+        {
+          "x": 2,
+          "y": 2,
+          "hp": 1
+        },
+        {
+          "x": 4,
+          "y": 2,
+          "hp": 1
+        },
+        {
+          "x": 0,
+          "y": 1,
+          "hp": 1
+        },
+        {
+          "x": 6,
+          "y": 1,
+          "hp": 1
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>星语庄园 · Unity 实装交付说明</title>
+<style>
+  body { font-family: "Microsoft YaHei", sans-serif; background: #f4f1ea; color: #4a3f63; margin: 0; padding: 32px 16px; }
+  .wrap { max-width: 860px; margin: 0 auto; }
+  h1 { color: #ffa733; font-size: 30px; margin-bottom: 4px; }
+  .sub { color: #8a7fa8; margin-bottom: 24px; }
+  h2 { color: #8b7cf0; border-left: 6px solid #3ec9a7; padding-left: 12px; margin-top: 32px; }
+  table { border-collapse: collapse; width: 100%; background: #fff; border-radius: 10px; overflow: hidden; }
+  th, td { border-bottom: 1px solid #eee6d8; padding: 8px 12px; text-align: left; font-size: 14px; }
+  th { background: #fdf3dd; }
+  code { background: #eee9f8; padding: 1px 6px; border-radius: 4px; font-size: 13px; }
+  .card { background: #fff; border-radius: 12px; padding: 16px 20px; margin: 12px 0; box-shadow: 0 2px 6px rgba(74,63,99,.08); }
+  ul { margin: 6px 0; padding-left: 22px; }
+  li { margin: 4px 0; font-size: 14px; }
+  .warn { background: #fff4f0; border-left: 6px solid #ff6b57; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>星语庄园 · Unity 实装交付说明</h1>
+  <div class="sub">Unity 2022.3.39f1 ｜ 工程：E:\unityhub\project\3Match ｜ 依据《星语庄园-游戏策划案》与《美术及UI需求文档》</div>
+
+  <h2>如何运行</h2>
+  <div class="card">
+    <ul>
+      <li>用 Unity Hub 打开工程 <code>E:\unityhub\project\3Match</code>（首次打开会自动导入资源并编译脚本）。</li>
+      <li>打开场景 <code>Assets/Scenes/MainMenu.unity</code>，点击 Play 即可从主界面开始游戏。</li>
+      <li>构建已包含 MainMenu 与 Gameplay 两个场景（Build Settings 已配置，竖屏）。</li>
+      <li>测试辅助：设置面板内提供「+5000 金币」「无限生命 2 小时」；生命不足面板提供「+1 生命」。</li>
+    </ul>
+  </div>
+
+  <h2>资源目录结构</h2>
+  <div class="card">
+    <ul>
+      <li><code>Assets/Art/Resources/Pieces</code> — 6 色基础棋子 + 4 种特殊棋子（从美术素材目录复制）</li>
+      <li><code>Assets/Art/Resources/Backgrounds</code> — 庄园主界面 / 关卡地图 / 花园关卡背景</li>
+      <li><code>Assets/Art/Resources/UI</code> — 按钮三态 / 货币图标 / 关卡节点 / 进度条 / 弹窗底 / 棋盘底</li>
+      <li><code>Assets/Art/Resources/Effects</code> — 6 色消除爆发 / 爆炸闪光 / 彩虹波 / 星光拖尾</li>
+      <li><code>Assets/Resources/Levels/levels.json</code> — 关卡配置（10 关）</li>
+      <li><code>Assets/Scripts/Core</code> — 棋盘模型 / 存档 / 音效 / 流程；<code>Assets/Scripts/UI</code> — UI 与特效</li>
+    </ul>
+  </div>
+
+  <h2>已实现玩法（对照策划案）</h2>
+  <table>
+    <tr><th>模块</th><th>实现内容</th><th>对应章节</th></tr>
+    <tr><td>棋盘规则</td><td>7×9 竖屏、6 色棋子、点选/拖拽交换、非法交换回弹不耗步、连锁消除、无可用移动自动洗牌（上限 5 次）</td><td>§3.2.1</td></tr>
+    <tr><td>特殊棋子</td><td>4 连→火箭（横/竖）、T/L 5 连→炸弹 3×3、直线 5 连→彩球、2×2→螺旋桨（飞向目标色/障碍十字消除）</td><td>§3.2.2</td></tr>
+    <tr><td>组合技</td><td>火箭+火箭（十字）、火箭+炸弹（3 行 3 列）、炸弹+炸弹（5×5）、彩球+普通（全色+3 转化）、彩球+特殊（全色转化引爆）、彩球+彩球（全屏清除）</td><td>§3.2.3</td></tr>
+    <tr><td>关卡目标</td><td>收集指定颜色、破坏木箱、清除冰层（多目标叠加，UI 分进度显示）</td><td>§3.2.4</td></tr>
+    <tr><td>障碍物</td><td>木箱（相邻消除 -1 层、阻挡下落）、冰层（格内消除 -1 层）</td><td>§3.2.5</td></tr>
+    <tr><td>胜负流程</td><td>步数耗尽失败（≤5 步红色脉冲）；通关后剩余步数逐个转化为随机特殊棋子引爆；失败可 900 金币 +5 步续关（单关上限 2 次）</td><td>§3.2.1/3.2.6</td></tr>
+    <tr><td>经济与生命</td><td>生命 5 上限、30 分钟/点恢复、失败扣 1、主动退出不扣；金币/星星入账；首次通关 +1 星并解锁下一关；PlayerPrefs 存档</td><td>§5.4/§6.3</td></tr>
+    <tr><td>UI 界面</td><td>主界面（庄园背景+顶栏+关卡地图节点三态）、关卡内（目标进度/步数/暂停/胜负结算）、设置与商城占位</td><td>§6.1/§6.2</td></tr>
+    <tr><td>关卡配置</td><td>levels.json 数据驱动：步数/目标/障碍/难度标签/金币奖励，新增关卡只改 JSON</td><td>§4.3</td></tr>
+    <tr><td>音画反馈</td><td>程序生成音效（消除/爆炸/组合/按钮/胜负），消除爆发帧、组合全屏闪光、彩虹波扩散、飘字提示</td><td>§4.6</td></tr>
+  </table>
+
+  <h2>技术要点</h2>
+  <div class="card">
+    <ul>
+      <li>棋盘逻辑为纯 C# 数据层（<code>BoardModel</code>），表现层只做动画，便于后续接入关卡编辑器与模拟器。</li>
+      <li>全部 UI 由代码构建（UGUI + 系统动态中文字体），场景仅含 Camera + Bootstrap 自举组件，无序列化引用断裂风险。</li>
+      <li>图集切片坐标集中在 <code>SpriteLib</code>（按钮三态纵向 3 帧、货币图标横向、关卡节点横向 5 帧、消除爆发 3×2）。</li>
+    </ul>
+  </div>
+
+  <h2>当前范围与后续建议</h2>
+  <div class="card warn">
+    <ul>
+      <li>本版本为可玩性完整的核心 Demo：10 个配置关卡 + 4 种特殊棋子 + 6 类组合 + 2 种障碍。庄园建设/社交/活动/商城为占位入口，属后续里程碑（对应策划案 §8.3 P2–P5）。</li>
+      <li>障碍物（木箱/冰层）暂用程序绘制占位块，待美术「待补清单」资源到位后在 <code>BoardController.CreateObstacleView</code> 替换贴图即可。</li>
+      <li>其余 5 色棋子的选中/高亮状态按素材清单建议由程序派生（当前用缩放选中态实现）。</li>
+    </ul>
+  </div>
+</div>
+</body>
+</html>
