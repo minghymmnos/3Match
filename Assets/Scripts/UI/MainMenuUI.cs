@@ -108,7 +108,7 @@ namespace StarManor
 
         private void OnPlayClicked()
         {
-            int next = Mathf.Min(SaveSystem.MaxUnlockedLevel, LevelDatabase.Count);
+            int next = Mathf.Min(SaveSystem.MaxUnlockedLevel, LevelDatabase.NormalCount);
             if (next < 1) next = 1;
             GameFlow.Instance.StartLevel(next);
         }
@@ -119,8 +119,9 @@ namespace StarManor
             int unlocked = SaveSystem.MaxUnlockedLevel;
             int cols = 3;
             float cellW = 260, cellH = 170;   // 适配面板内容区（缎带下方至底边约 670px）
-            int total = LevelDatabase.Count;
-            int rows = Mathf.CeilToInt(total / (float)cols); // 网格纵向居中
+            int total = LevelDatabase.NormalCount; // 正式关卡（测试关单独追加）
+            int nodes = total + (LevelDatabase.TestLevel != null ? 1 : 0);
+            int rows = Mathf.CeilToInt(nodes / (float)cols); // 网格纵向居中
             for (int i = 1; i <= total; i++)
             {
                 int row = (i - 1) / cols;
@@ -164,6 +165,31 @@ namespace StarManor
                 // 锁定关：数字下方、锁图标内标注状态
                 if (isLocked)
                     UIFactory.Text(node, "LockHint", "未解锁", 22, new Color(1f, 1f, 1f, 0.62f), new Vector2(120, 28), new Vector2(0, -54));
+            }
+
+            // 测试关节点（网格末尾）：无目标、步数无限，方便验证改动效果
+            var testDef = LevelDatabase.TestLevel;
+            if (testDef != null)
+            {
+                int ti = total; // 与第 total 关相邻的下一格
+                int row = ti / cols;
+                int col = ti % cols;
+                float x = -cellW * cols * 0.5f + cellW * (col + 0.5f);
+                float y = (rows - 1) * cellH * 0.5f - row * cellH;
+                var node = UIFactory.Anchored(_gridRoot, "Node_Test", new Vector2(0.5f, 0.5f), new Vector2(cellW - 20, cellH - 10), new Vector2(x, y));
+                var btn = UIFactory.IconButton(node, SpriteLib.LevelNode(0), new Vector2(150, 150), new Vector2(0, -4), null);
+                btn.onClick.AddListener(() =>
+                {
+                    SoundManager.Instance.Play("click");
+                    GameFlow.Instance.StartLevel(testDef.id);
+                });
+                var lbl = UIFactory.Text(node, "Num", "测试", 34, Color.white, new Vector2(120, 60), new Vector2(0, -4));
+                var ol = lbl.gameObject.AddComponent<UnityEngine.UI.Outline>();
+                ol.effectColor = new Color(0.15f, 0.1f, 0.25f, 0.9f);
+                ol.effectDistance = new Vector2(1.6f, -1.6f);
+                // 场景内挂了 TestLevelConfig 时显示角标，方便确认自定义配置已生效
+                if (TestLevelConfig.Instance != null)
+                    UIFactory.Text(node, "CfgBadge", "自定义", 22, new Color(1f, 0.85f, 0.4f), new Vector2(120, 28), new Vector2(0, -56));
             }
         }
 

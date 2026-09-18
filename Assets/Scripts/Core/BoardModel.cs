@@ -30,22 +30,22 @@ namespace StarManor
         public Obstacle(string k, int h) { kind = k; hp = h; }
     }
 
-    /// <summary>消除方案中要生成的新特殊棋子。</summary>
-    public class SpecialSpawn
-    {
-        public int x, y;
-        public Piece piece;
-        public Vector2Int propellerTarget; // 螺旋桨起飞目标（仅 Propeller 用）
-        public bool propellerFlies;        // true=生成后立即飞走（不留场）
-    }
+        /// <summary>消除方案中要生成的新特殊棋子。</summary>
+        public class SpecialSpawn
+        {
+            public int x, y;
+            public Piece piece;
+        }
 
-    /// <summary>一次消除的完整方案。</summary>
-    public class ClearPlan
-    {
-        public HashSet<Vector2Int> cells = new HashSet<Vector2Int>();
-        public List<SpecialSpawn> spawns = new List<SpecialSpawn>();
-        public string comboName; // 组合技提示（如“火箭+炸弹”）
-    }
+        /// <summary>一次消除的完整方案。</summary>
+        public class ClearPlan
+        {
+            public HashSet<Vector2Int> cells = new HashSet<Vector2Int>();
+            public List<SpecialSpawn> spawns = new List<SpecialSpawn>();
+            public string comboName; // 组合技提示（如“火箭+炸弹”）
+            /// <summary>螺旋桨对障碍物的直接打击格（hp-1，不通过相邻消除）。</summary>
+            public List<Vector2Int> propellerDirectHits = new List<Vector2Int>();
+        }
 
     /// <summary>消除结算结果。</summary>
     public class ClearResult
@@ -65,13 +65,54 @@ namespace StarManor
         public Piece piece;
     }
 
-    /// <summary>7×9 三消棋盘纯数据模型（不含表现与协程）。</summary>
-    public class BoardModel
+        /// <summary>9×9 三消棋盘纯数据模型（不含表现与协程）。</summary>
+        public class BoardModel
     {
         public Piece[,] grid;        // [col, row]，row 0 = 底部
         public Obstacle[,] obstacles;
         public System.Random rng;
         public int shuffleCount;
+
+        /// <summary>测试用棋子颜色池（null 或空 = 全部 6 色）。减少颜色种类更容易凑出特殊棋子。</summary>
+        public List<PieceColor> colorPool;
+
+        /// <summary>
+        /// 特殊棋子触发开关（仅测试关由 TestLevelConfig 关闭；正式关永远全开）。
+        /// 只拦截"主动触发"通道：单击 / 与普通棋子交换 / 特殊棋子之间交换（组合技）。
+        /// 不影响消除机制本身：特殊棋子被普通消除波及时的连锁引爆（ExpandChain）保持原样。
+        /// 每类特殊棋子（火箭/炸弹/螺旋桨/彩球）三个通道独立开关。
+        /// </summary>
+        [System.Serializable]
+        public class PieceRule
+        {
+            public bool clickActivate = true;   // 单击触发
+            public bool swapWithNormal = true;  // 与普通棋子交换触发
+            public bool swapSpecials = true;    // 与其他特殊棋子交换触发（组合技）
+        }
+
+        [System.Serializable]
+        public class RuleToggles
+        {
+            public PieceRule rocket = new PieceRule();     // 纵向/横向火箭共用
+            public PieceRule bomb = new PieceRule();
+            public PieceRule propeller = new PieceRule();
+            public PieceRule rainbow = new PieceRule();
+
+            public PieceRule Get(SpecialKind kind)
+            {
+                switch (kind)
+                {
+                    case SpecialKind.RocketRow:
+                    case SpecialKind.RocketCol: return rocket;
+                    case SpecialKind.Bomb: return bomb;
+                    case SpecialKind.Propeller: return propeller;
+                    case SpecialKind.Rainbow: return rainbow;
+                    default: return new PieceRule(); // None：不会被查询到
+                }
+            }
+        }
+
+        public RuleToggles rules = new RuleToggles();
 
         public BoardModel(int seed)
         {
@@ -130,11 +171,18 @@ namespace StarManor
             if (!HasValidMove()) Shuffle();
         }
 
+        /// <summary>从颜色池随机取色（池为空时回退全 6 色）。</summary>
+        private PieceColor PoolColor()
+        {
+            if (colorPool == null || colorPool.Count == 0) return (PieceColor)rng.Next(6);
+            return colorPool[rng.Next(colorPool.Count)];
+        }
+
         private PieceColor RandomColorNoMatch(int x, int y)
         {
             for (int attempt = 0; attempt < 20; attempt++)
             {
-                var c = (PieceColor)rng.Next(6);
+                var c = PoolColor();
                 // 检查左侧两个与下方两个是否构成三连
                 if (x >= 2 && grid[x - 1, y] != null && grid[x - 2, y] != null &&
                     grid[x - 1, y].color == c && grid[x - 2, y].color == c) continue;
@@ -233,37 +281,161 @@ namespace StarManor
             var pb = Get(b.x, b.y);
             if (pa == null || pb == null) return null;
 
-            // 组合技：任一为彩虹球，或两个都是特殊棋子
+            // 组合技：任一为彩虹球，或两个都是特殊棋子（触发类别归"特殊+特殊"）；
+            // 彩球+普通棋子归"特殊+普通"类别。按参与棋子各自的开关判断，关闭时不触发组合，按普通交换流程继续。
             if (pa.IsRainbow || pb.IsRainbow || (pa.IsSpecial && pb.IsSpecial))
-                return BuildComboPlan(a, b);
+            {
+                bool comboAllowed;
+                if (pa.IsRainbow && pb.IsRainbow)
+                    comboAllowed = rules.Get(SpecialKind.Rainbow).swapSpecials;
+                else if (pa.IsRainbow || pb.IsRainbow)
+                {
+                    var other = pa.IsRainbow ? pb : pa;
+                    comboAllowed = other.IsSpecial
+                        ? (rules.Get(SpecialKind.Rainbow).swapSpecials && rules.Get(other.special).swapSpecials)
+                        : rules.Get(SpecialKind.Rainbow).swapWithNormal;
+                }
+                else comboAllowed = rules.Get(pa.special).swapSpecials && rules.Get(pb.special).swapSpecials;
+                if (comboAllowed) return BuildComboPlan(a, b);
+                // 开关关闭：落到下方普通交换逻辑（彩球无颜色不会构成消除，通常回弹）
+            }
 
             Swap(a.x, a.y, b.x, b.y);
             var runs = FindRuns();
+
+            // 主动构造 2×2：交换落点处形成独立 2×2 同色方块 → 四格消除 + 落点生成螺旋桨
+            var runCells = RunCells(runs);
+            bool hasQuadB = TryGetIndependentQuad(b, runCells, out var quadB, out var quadColorB);
+            bool hasQuadA = TryGetIndependentQuad(a, runCells, out var quadA, out var quadColorA);
+            if (hasQuadB && hasQuadA && quadA[0] == quadB[0]) hasQuadA = false; // a、b 属于同一个 2×2 时只生成一个
+
             if (runs.Count == 0)
             {
-                // 特殊棋子 + 普通棋子且未构成消除：直接在落点引爆特殊棋子（ Royal Match 规则）
-                if (pa.IsSpecial) return PlanSingleDetonation(b, pa);
-                if (pb.IsSpecial) return PlanSingleDetonation(a, pb);
-                Swap(a.x, a.y, b.x, b.y); // 回弹
-                return null;
+                // 特殊棋子 + 普通棋子且未构成消除：该特殊棋子的"与普通交换"开关开启时，在落点直接激活（特殊优先于 2×2）。
+                // 特殊+特殊组合被关闭时不在此处单独引爆，直接走 2×2/回弹。
+                if (pa.IsSpecial && !pb.IsSpecial && rules.Get(pa.special).swapWithNormal)
+                    return PlanSingleDetonation(b, pa);
+                if (pb.IsSpecial && !pa.IsSpecial && rules.Get(pb.special).swapWithNormal)
+                    return PlanSingleDetonation(a, pb);
+                if (!hasQuadB && !hasQuadA)
+                {
+                    Swap(a.x, a.y, b.x, b.y); // 回弹
+                    return null;
+                }
             }
             var plan = PlanFromRuns(runs, b, a);
+            if (hasQuadB) AddQuadSpawn(plan, quadB, b, quadColorB);
+            if (hasQuadA) AddQuadSpawn(plan, quadA, a, quadColorA);
+            // 特殊棋子交换触发（即使交换同时构成了消除也在落点触发）：按触发棋子自身的开关判断。
+            //（火箭=落点行/列、炸弹=落点 5×5、螺旋桨=自动消除一个目标；拖动或被换两个方向均生效。
+            //  若特殊棋子本身参与了消除，ExpandChain 已触发过，HashSet 去重不会重复引爆。）
+            if (pa.IsSpecial && pb.IsSpecial)
+            {
+                // 特殊+特殊：双方"与其他特殊交换"开关都开启才在落点引爆
+                if (rules.Get(pa.special).swapSpecials && rules.Get(pb.special).swapSpecials)
+                    MergeSingleDetonation(plan, b, pa);
+            }
+            else if (pa.IsSpecial && rules.Get(pa.special).swapWithNormal)
+                MergeSingleDetonation(plan, b, pa);
+            else if (pb.IsSpecial && rules.Get(pb.special).swapWithNormal)
+                MergeSingleDetonation(plan, a, pb);
             return plan;
         }
 
-        /// <summary>单个特殊棋子在 pos 处引爆的方案（用于交换激活）。</summary>
+        /// <summary>run 列表展开为格子列表。</summary>
+        private List<Vector2Int> RunCells(List<Run> runs)
+        {
+            var cells = new List<Vector2Int>();
+            if (runs == null) return cells;
+            foreach (var r in runs)
+                for (int i = 0; i < r.len; i++)
+                    cells.Add(r.horiz ? new Vector2Int(r.x + i, r.y) : new Vector2Int(r.x, r.y + i));
+            return cells;
+        }
+
+        /// <summary>
+        /// 找包含 pos 的独立 2×2 同色方块（四格均不属于任何直线消除）。
+        /// 用于"移动棋子主动构造 2×2 生成螺旋桨"。找到返回四格与颜色。
+        /// </summary>
+        private bool TryGetIndependentQuad(Vector2Int pos, List<Vector2Int> runCells, out Vector2Int[] quad, out PieceColor color)
+        {
+            quad = null;
+            color = PieceColor.Rose;
+            for (int dx = -1; dx <= 0; dx++)
+                for (int dy = -1; dy <= 0; dy++)
+                {
+                    int x0 = pos.x + dx, y0 = pos.y + dy;
+                    if (x0 < 0 || y0 < 0 || x0 + 1 >= GameConfig.BoardCols || y0 + 1 >= GameConfig.BoardRows) continue;
+                    var c00 = new Vector2Int(x0, y0); var c10 = new Vector2Int(x0 + 1, y0);
+                    var c01 = new Vector2Int(x0, y0 + 1); var c11 = new Vector2Int(x0 + 1, y0 + 1);
+                    if (runCells.Contains(c00) || runCells.Contains(c10) ||
+                        runCells.Contains(c01) || runCells.Contains(c11)) continue;
+                    var p0 = grid[x0, y0]; var p1 = grid[x0 + 1, y0];
+                    var p2 = grid[x0, y0 + 1]; var p3 = grid[x0 + 1, y0 + 1];
+                    if (p0 == null || p1 == null || p2 == null || p3 == null) continue;
+                    if (!p0.HasColor || p1.color != p0.color || p2.color != p0.color || p3.color != p0.color) continue;
+                    quad = new[] { c00, c10, c01, c11 };
+                    color = p0.color;
+                    return true;
+                }
+            return false;
+        }
+
+        /// <summary>把主动构造的 2×2 并入消除方案：四格清除 + 在落点生成螺旋桨。</summary>
+        private void AddQuadSpawn(ClearPlan plan, Vector2Int[] quad, Vector2Int spawnPos, PieceColor color)
+        {
+            foreach (var c in quad) plan.cells.Add(c);
+            plan.spawns.Add(new SpecialSpawn { x = spawnPos.x, y = spawnPos.y, piece = new Piece(color, SpecialKind.Propeller) });
+            ExpandChain(plan); // 方块内若含特殊棋子（如同色火箭），照常连锁引爆
+        }
+
+        /// <summary>
+        /// 场上自动转化：找一个 2×2 同色方块，返回"四格清除 + 方块原点生成螺旋桨"的方案。
+        /// 供开局与每次级联落定后调用（此时盘面无三连，任何 2×2 均为独立方块）；无则返回 null。
+        /// </summary>
+        public ClearPlan NextQuadConvertPlan()
+        {
+            for (int x = 0; x < GameConfig.BoardCols - 1; x++)
+                for (int y = 0; y < GameConfig.BoardRows - 1; y++)
+                {
+                    var p0 = grid[x, y]; var p1 = grid[x + 1, y];
+                    var p2 = grid[x, y + 1]; var p3 = grid[x + 1, y + 1];
+                    if (p0 == null || p1 == null || p2 == null || p3 == null) continue;
+                    if (!p0.HasColor || p1.color != p0.color || p2.color != p0.color || p3.color != p0.color) continue;
+                    var plan = new ClearPlan();
+                    plan.cells.Add(new Vector2Int(x, y));
+                    plan.cells.Add(new Vector2Int(x + 1, y));
+                    plan.cells.Add(new Vector2Int(x, y + 1));
+                    plan.cells.Add(new Vector2Int(x + 1, y + 1));
+                    plan.spawns.Add(new SpecialSpawn { x = x, y = y, piece = new Piece(p0.color, SpecialKind.Propeller) });
+                    ExpandChain(plan);
+                    return plan;
+                }
+            return null;
+        }
+
+        /// <summary>把一枚特殊棋子在 pos 处的引爆并入已有方案（不覆盖 comboName，去重后连锁展开）。</summary>
+        private void MergeSingleDetonation(ClearPlan plan, Vector2Int pos, Piece p)
+        {
+            if (!InBounds(pos.x, pos.y) || !plan.cells.Add(pos)) return;
+            foreach (var e in DetonationCells(pos, p, plan))
+                if (InBounds(e.x, e.y)) plan.cells.Add(e);
+            ExpandChain(plan);
+        }
+
+        /// <summary>单个特殊棋子在 pos 处激活的方案（用于交换激活）。</summary>
         private ClearPlan PlanSingleDetonation(Vector2Int pos, Piece p)
         {
             var plan = new ClearPlan();
             switch (p.special)
             {
-                case SpecialKind.RocketRow:
-                case SpecialKind.RocketCol: plan.comboName = "火箭发射！"; break;
+                case SpecialKind.RocketRow: plan.comboName = "横向火箭！消除整行！"; break;
+                case SpecialKind.RocketCol: plan.comboName = "纵向火箭！消除整列！"; break;
                 case SpecialKind.Bomb: plan.comboName = "炸弹引爆！"; break;
                 case SpecialKind.Propeller: plan.comboName = "螺旋桨起飞！"; break;
             }
             plan.cells.Add(pos);
-            foreach (var e in DetonationCells(pos, p))
+            foreach (var e in DetonationCells(pos, p, plan))
                 if (InBounds(e.x, e.y)) plan.cells.Add(e);
             ExpandChain(plan);
             return plan;
@@ -290,7 +462,8 @@ namespace StarManor
                 Vector2Int pos = new Vector2Int(r.x + r.len / 2, r.y);
                 if (!r.horiz) pos = new Vector2Int(r.x, r.y + r.len / 2);
                 if (involved.Contains(swapPos) && SameLine(r, swapPos)) pos = swapPos;
-                if (claimed.Contains(pos)) continue;
+                pos = PickSpawnInRun(r, pos, claimed);
+                if (pos.x < 0) continue;
                 claimed.Add(pos);
                 consumed.Add(ri);
                 plan.spawns.Add(new SpecialSpawn { x = pos.x, y = pos.y, piece = new Piece(PieceColor.Rose, SpecialKind.Rainbow) });
@@ -325,7 +498,7 @@ namespace StarManor
                 }
             }
 
-            // 3) 4 连 → 火箭（横向消除的行火箭 / 纵向消除的列火箭）
+            // 3) 4 连 → 火箭：四个一行 → 纵向火箭（清一列）；四个一列 → 横向火箭（清一行）
             for (int ri = 0; ri < runs.Count; ri++)
             {
                 var r = runs[ri];
@@ -334,39 +507,33 @@ namespace StarManor
                 if (!r.horiz) pos = new Vector2Int(r.x, r.y + 1);
                 if (involved.Contains(swapPos) && SameLine(r, swapPos)) pos = swapPos;
                 else if (involved.Contains(otherSwapPos) && SameLine(r, otherSwapPos)) pos = otherSwapPos;
-                if (claimed.Contains(pos)) continue;
+                pos = PickSpawnInRun(r, pos, claimed);
+                if (pos.x < 0) continue;
                 claimed.Add(pos);
-                var kind = r.horiz ? SpecialKind.RocketRow : SpecialKind.RocketCol;
+                var kind = r.horiz ? SpecialKind.RocketCol : SpecialKind.RocketRow;
                 plan.spawns.Add(new SpecialSpawn { x = pos.x, y = pos.y, piece = new Piece(r.color, kind) });
             }
 
-            // 4) 2×2 方形 → 螺旋桨（起飞消除目标十字）
+            // 4) 被消除的格子中出现 2×2 同色方块 → 螺旋桨（在方块处生成，留场特殊棋子）
             for (int x = 0; x < GameConfig.BoardCols - 1; x++)
                 for (int y = 0; y < GameConfig.BoardRows - 1; y++)
                 {
+                    var c00 = new Vector2Int(x, y); var c10 = new Vector2Int(x + 1, y);
+                    var c01 = new Vector2Int(x, y + 1); var c11 = new Vector2Int(x + 1, y + 1);
+                    // 四格必须全部在本次消除范围内：2×2 被消除才生成螺旋桨
+                    if (!involved.Contains(c00) || !involved.Contains(c10) ||
+                        !involved.Contains(c01) || !involved.Contains(c11)) continue;
                     var p0 = grid[x, y]; var p1 = grid[x + 1, y];
                     var p2 = grid[x, y + 1]; var p3 = grid[x + 1, y + 1];
                     if (p0 == null || p1 == null || p2 == null || p3 == null) continue;
                     if (!p0.HasColor || p1.color != p0.color || p2.color != p0.color || p3.color != p0.color) continue;
-                    var c00 = new Vector2Int(x, y); var c10 = new Vector2Int(x + 1, y);
-                    var c01 = new Vector2Int(x, y + 1); var c11 = new Vector2Int(x + 1, y + 1);
-                    // 仅独立 2×2（不属于任何 run）才触发螺旋桨
-                    if (involved.Contains(c00) || involved.Contains(c10) ||
-                        involved.Contains(c01) || involved.Contains(c11)) continue;
-                    if (claimed.Contains(c00) || claimed.Contains(c10) || claimed.Contains(c01) || claimed.Contains(c11)) continue;
-                    involved.Add(c00); involved.Add(c10); involved.Add(c01); involved.Add(c11);
+                    // 生成位置优先取交换落点，其次方块原点；已被更高优先级特殊棋子占用则退让/放弃
                     Vector2Int spawnPos = c00;
                     if (swapPos == c00 || swapPos == c10 || swapPos == c01 || swapPos == c11) spawnPos = swapPos;
+                    if (claimed.Contains(spawnPos)) spawnPos = c00;
+                    if (claimed.Contains(spawnPos)) continue;
                     claimed.Add(spawnPos);
-                    var sp = new SpecialSpawn
-                    {
-                        x = spawnPos.x,
-                        y = spawnPos.y,
-                        piece = new Piece(p0.color, SpecialKind.Propeller),
-                        propellerFlies = true,
-                        propellerTarget = PickPropellerTarget(p0.color)
-                    };
-                    plan.spawns.Add(sp);
+                    plan.spawns.Add(new SpecialSpawn { x = spawnPos.x, y = spawnPos.y, piece = new Piece(p0.color, SpecialKind.Propeller) });
                 }
 
             // 汇总待清除格子 = 所有涉及格
@@ -383,26 +550,41 @@ namespace StarManor
             return p.x == r.x && p.y >= r.y && p.y < r.y + r.len;
         }
 
-        /// <summary>螺旋桨目标选择：未完成目标色 > 障碍 > 随机棋子（由 controller 注入目标色集合）。</summary>
+        /// <summary>
+        /// 生成点回退：优先用首选位置；若已被更高优先级特殊棋子占用，回退到该 run 内第一个空闲格。
+        /// 全部被占返回 (-1,-1)（放弃生成）。保证低优先级消除不被整体吞掉。
+        /// </summary>
+        private Vector2Int PickSpawnInRun(Run r, Vector2Int preferred, HashSet<Vector2Int> claimed)
+        {
+            if (!claimed.Contains(preferred)) return preferred;
+            for (int i = 0; i < r.len; i++)
+            {
+                var c = r.horiz ? new Vector2Int(r.x + i, r.y) : new Vector2Int(r.x, r.y + i);
+                if (!claimed.Contains(c)) return c;
+            }
+            return new Vector2Int(-1, -1);
+        }
+
+        /// <summary>螺旋桨目标选择（与关卡目标相关）：未完成目标色棋子 > 障碍格 > 随机棋子。</summary>
         public List<PieceColor> preferredGoalColors = new List<PieceColor>();
 
-        private Vector2Int PickPropellerTarget(PieceColor spawnColor)
+        private Vector2Int PickPropellerTarget()
         {
-            // 优先目标色
-            for (int t = 0; t < 30; t++)
+            // 优先未完成的收集目标色
+            for (int t = 0; t < 60; t++)
             {
                 int x = rng.Next(GameConfig.BoardCols), y = rng.Next(GameConfig.BoardRows);
                 var p = grid[x, y];
                 if (p != null && p.HasColor && preferredGoalColors.Contains(p.color)) return new Vector2Int(x, y);
             }
-            // 其次障碍格
-            for (int t = 0; t < 30; t++)
+            // 其次障碍格（木箱/冰层，命中后 hp-1）
+            for (int t = 0; t < 60; t++)
             {
                 int x = rng.Next(GameConfig.BoardCols), y = rng.Next(GameConfig.BoardRows);
                 if (obstacles[x, y] != null) return new Vector2Int(x, y);
             }
             // 随机棋子
-            for (int t = 0; t < 30; t++)
+            for (int t = 0; t < 60; t++)
             {
                 int x = rng.Next(GameConfig.BoardCols), y = rng.Next(GameConfig.BoardRows);
                 if (grid[x, y] != null) return new Vector2Int(x, y);
@@ -423,52 +605,54 @@ namespace StarManor
                 bool alreadyPlanned = plan.cells.Contains(c);
                 if (!alreadyPlanned) plan.cells.Add(c);
 
-                foreach (var e in DetonationCells(c, p))
+                foreach (var e in DetonationCells(c, p, plan))
                 {
                     if (plan.cells.Add(e)) queue.Enqueue(e);
                 }
             }
         }
 
-        /// <summary>单个特殊棋子引爆时的效果范围（不含自身）。</summary>
-        public List<Vector2Int> DetonationCells(Vector2Int pos, Piece p)
+        /// <summary>单个特殊棋子激活时的效果范围（不含自身）。plan 用于螺旋桨对障碍物的直击记录。</summary>
+        public List<Vector2Int> DetonationCells(Vector2Int pos, Piece p, ClearPlan plan = null)
         {
             var list = new List<Vector2Int>();
             switch (p.special)
             {
                 case SpecialKind.RocketRow:
+                    // 横向火箭：消除所在整行
                     for (int x = 0; x < GameConfig.BoardCols; x++) list.Add(new Vector2Int(x, pos.y));
                     break;
                 case SpecialKind.RocketCol:
+                    // 纵向火箭：消除所在整列
                     for (int y = 0; y < GameConfig.BoardRows; y++) list.Add(new Vector2Int(pos.x, y));
                     break;
                 case SpecialKind.Bomb:
-                    for (int dx = -1; dx <= 1; dx++)
-                        for (int dy = -1; dy <= 1; dy++)
+                    // 炸弹：自身中心 5×5
+                    for (int dx = -2; dx <= 2; dx++)
+                        for (int dy = -2; dy <= 2; dy++)
                             if (InBounds(pos.x + dx, pos.y + dy)) list.Add(new Vector2Int(pos.x + dx, pos.y + dy));
                     break;
                 case SpecialKind.Propeller:
-                    list.Add(pos + new Vector2Int(0, 1));
-                    list.Add(pos + new Vector2Int(0, -1));
-                    list.Add(pos + new Vector2Int(1, 0));
-                    list.Add(pos + new Vector2Int(-1, 0));
-                    break;
-                case SpecialKind.Rainbow:
-                    // 被爆炸波及的彩球：清除场上数量最多的一种颜色
-                    var counts = new Dictionary<PieceColor, int>();
-                    for (int x = 0; x < GameConfig.BoardCols; x++)
-                        for (int y = 0; y < GameConfig.BoardRows; y++)
+                {
+                    // 螺旋桨：自动消除场上一个目标棋子；目标是障碍时使其 hp-1
+                    var t = PickPropellerTarget();
+                    if (InBounds(t.x, t.y))
+                    {
+                        if (HasCrate(t.x, t.y))
                         {
-                            var q = grid[x, y];
-                            if (q != null && q.HasColor)
-                            {
-                                if (!counts.ContainsKey(q.color)) counts[q.color] = 0;
-                                counts[q.color]++;
-                            }
+                            // 木箱不受格内清除影响（只被相邻消除波及），这里走直击通道
+                            if (plan != null) plan.propellerDirectHits.Add(t);
                         }
-                    PieceColor best = PieceColor.Rose; int bestN = -1;
-                    foreach (var kv in counts)
-                        if (kv.Value > bestN) { bestN = kv.Value; best = kv.Key; }
+                        else
+                        {
+                            list.Add(t); // 普通棋子格 / 冰层格（冰层在格内被清除时 hp-1）
+                        }
+                    }
+                    break;
+                }
+                case SpecialKind.Rainbow:
+                    // 彩球：消除棋盘上个数最多的一种棋子
+                    PieceColor best = MostCommonColor();
                     for (int x = 0; x < GameConfig.BoardCols; x++)
                         for (int y = 0; y < GameConfig.BoardRows; y++)
                         {
@@ -507,24 +691,29 @@ namespace StarManor
                 var other = aRain ? pb : pa;
                 if (other.IsSpecial)
                 {
-                    // 彩球+特殊棋子：该颜色全部棋子转化为对应特殊棋子后依次引爆
-                    // （彩球位置最后再加入，避免 ExpandChain 把彩球本身当引爆点多炸一种颜色）
-                    plan.comboName = "彩虹转化！";
-                    var targetColor = other.color;
+                    // 彩球+特殊棋子：场上数量最多的颜色全部转化为对应特殊棋子并触发；
+                    // 彩球与原特殊棋子只作为组合材料被清除，自身不另起效果
+                    if (IsRocket(other.special)) plan.comboName = "彩虹火箭群！";
+                    else if (other.special == SpecialKind.Bomb) plan.comboName = "彩虹炸弹群！";
+                    else plan.comboName = "彩虹螺旋桨群！";
+
+                    var targetColor = MostCommonColor();
                     var converted = new List<Vector2Int>();
                     for (int x = 0; x < GameConfig.BoardCols; x++)
                         for (int y = 0; y < GameConfig.BoardRows; y++)
                         {
                             var q = grid[x, y];
-                            if (q != null && q.HasColor && q.color == targetColor && !(x == otherPos.x && y == otherPos.y))
-                            {
-                                q.special = other.special;
-                                converted.Add(new Vector2Int(x, y));
-                            }
+                            if (q == null || !q.HasColor || q.color != targetColor) continue;
+                            if (x == otherPos.x && y == otherPos.y) continue;
+                            // 火箭：每颗随机转为纵向/横向；炸弹/螺旋桨：保持对应种类
+                            q.special = IsRocket(other.special)
+                                ? (rng.Next(2) == 0 ? SpecialKind.RocketCol : SpecialKind.RocketRow)
+                                : other.special;
+                            converted.Add(new Vector2Int(x, y));
                         }
-                    plan.cells.Add(otherPos);
                     foreach (var c in converted) plan.cells.Add(c);
-                    ExpandChain(plan);
+                    ExpandChain(plan); // 转化出的特殊棋子在各自位置依次引爆
+                    plan.cells.Add(otherPos);
                     plan.cells.Add(rainPos);
                     return plan;
                 }
@@ -546,54 +735,137 @@ namespace StarManor
             }
 
             // 两个特殊棋子（均非彩虹）
-            plan.cells.Add(a);
-            plan.cells.Add(b);
-            Vector2Int center = b; // 以交换落点为中心
+            // 来源两枚先从盘面摘除：作为组合材料被清除，避免 ExpandChain 对其重复引爆
+            grid[a.x, a.y] = null;
+            grid[b.x, b.y] = null;
+
             var kindA = pa.special; var kindB = pb.special;
-            bool aRocket = kindA == SpecialKind.RocketRow || kindA == SpecialKind.RocketCol;
-            bool bRocket = kindB == SpecialKind.RocketRow || kindB == SpecialKind.RocketCol;
+            bool aRocket = IsRocket(kindA);
+            bool bRocket = IsRocket(kindB);
 
             if (aRocket && bRocket)
             {
-                plan.comboName = "火箭+火箭！";
-                for (int x = 0; x < GameConfig.BoardCols; x++) plan.cells.Add(new Vector2Int(x, center.y));
-                for (int y = 0; y < GameConfig.BoardRows; y++) plan.cells.Add(new Vector2Int(center.x, y));
+                // 火箭+火箭：以主动移动棋子的落点 b 为中心消除所在行 + 所在列（与两者朝向无关）
+                plan.comboName = "火箭+火箭！十字引爆！";
+                for (int x = 0; x < GameConfig.BoardCols; x++) plan.cells.Add(new Vector2Int(x, b.y));
+                for (int y = 0; y < GameConfig.BoardRows; y++) plan.cells.Add(new Vector2Int(b.x, y));
             }
-            else if ((aRocket && kindB == SpecialKind.Bomb) || (bRocket && kindA == SpecialKind.Bomb))
+            else if (aRocket || bRocket)
             {
-                // 火箭+炸弹：横向火箭清 3 行，纵向火箭清 3 列
-                var rocketKind = aRocket ? kindA : kindB;
-                if (rocketKind == SpecialKind.RocketRow)
+                // 主动移动的棋子 pa 落点为 b，pb 落点为 a
+                var rocket = aRocket ? pa : pb;
+                var rocketPos = aRocket ? b : a;
+                var otherKind = aRocket ? kindB : kindA;
+
+                if (otherKind == SpecialKind.Propeller)
                 {
-                    plan.comboName = "火箭+炸弹！三行横扫！";
-                    for (int dy = -1; dy <= 1; dy++)
-                        for (int x = 0; x < GameConfig.BoardCols; x++)
-                            if (InBounds(x, center.y + dy)) plan.cells.Add(new Vector2Int(x, center.y + dy));
+                    // 火箭+螺旋桨：无组合特效，火箭在其落点触发 + 螺旋桨触发一次
+                    plan.cells.Add(rocketPos);
+                    foreach (var e in DetonationCells(rocketPos, rocket, plan))
+                        if (InBounds(e.x, e.y)) plan.cells.Add(e);
+                    AddPropellerHit(plan);
                 }
                 else
                 {
-                    plan.comboName = "火箭+炸弹！三列贯穿！";
-                    for (int dx = -1; dx <= 1; dx++)
-                        for (int y = 0; y < GameConfig.BoardRows; y++)
-                            if (InBounds(center.x + dx, y)) plan.cells.Add(new Vector2Int(center.x + dx, y));
+                    // 火箭+炸弹：以火箭落点为中心，纵向火箭清 3 列 / 横向火箭清 3 行
+                    if (rocket.special == SpecialKind.RocketCol)
+                    {
+                        plan.comboName = "火箭+炸弹！三列贯穿！";
+                        for (int dx = -1; dx <= 1; dx++)
+                            for (int y = 0; y < GameConfig.BoardRows; y++)
+                                if (InBounds(rocketPos.x + dx, y)) plan.cells.Add(new Vector2Int(rocketPos.x + dx, y));
+                    }
+                    else
+                    {
+                        plan.comboName = "火箭+炸弹！三行横扫！";
+                        for (int dy = -1; dy <= 1; dy++)
+                            for (int x = 0; x < GameConfig.BoardCols; x++)
+                                if (InBounds(x, rocketPos.y + dy)) plan.cells.Add(new Vector2Int(x, rocketPos.y + dy));
+                    }
                 }
             }
             else if (kindA == SpecialKind.Bomb && kindB == SpecialKind.Bomb)
             {
-                plan.comboName = "炸弹+炸弹！";
-                for (int dx = -2; dx <= 2; dx++)
-                    for (int dy = -2; dy <= 2; dy++)
-                        if (InBounds(center.x + dx, center.y + dy)) plan.cells.Add(new Vector2Int(center.x + dx, center.y + dy));
+                // 炸弹+炸弹：以主动移动棋子的落点 b 为中心的 9×9 范围
+                plan.comboName = "炸弹+炸弹！9×9 巨爆！";
+                for (int dx = -4; dx <= 4; dx++)
+                    for (int dy = -4; dy <= 4; dy++)
+                        if (InBounds(b.x + dx, b.y + dy)) plan.cells.Add(new Vector2Int(b.x + dx, b.y + dy));
+            }
+            else if (kindA == SpecialKind.Propeller && kindB == SpecialKind.Propeller)
+            {
+                // 螺旋桨+螺旋桨：同时触发 3 个螺旋桨
+                plan.comboName = "螺旋桨×3！";
+                AddPropellerHit(plan);
+                AddPropellerHit(plan);
+                AddPropellerHit(plan);
             }
             else
             {
-                // 其他组合（螺旋桨参与）：按两个特殊棋子各自引爆处理
-                plan.comboName = "组合引爆！";
-                foreach (var e in DetonationCells(a, pa)) plan.cells.Add(e);
-                foreach (var e in DetonationCells(b, pb)) plan.cells.Add(e);
+                // 螺旋桨+炸弹：炸弹移动到随机一个目标棋子处引爆（无目标棋子则移动到随机棋子处）
+                plan.comboName = "螺旋桨运载炸弹！";
+                var t = PickComboBombTarget();
+                for (int dx = -2; dx <= 2; dx++)
+                    for (int dy = -2; dy <= 2; dy++)
+                        if (InBounds(t.x + dx, t.y + dy)) plan.cells.Add(new Vector2Int(t.x + dx, t.y + dy));
             }
+
             ExpandChain(plan);
+            plan.cells.Add(a);
+            plan.cells.Add(b);
             return plan;
+        }
+
+        private static bool IsRocket(SpecialKind k)
+        {
+            return k == SpecialKind.RocketRow || k == SpecialKind.RocketCol;
+        }
+
+        /// <summary>场上数量最多的棋子颜色（平局取先遍历者）。</summary>
+        private PieceColor MostCommonColor()
+        {
+            var counts = new Dictionary<PieceColor, int>();
+            for (int x = 0; x < GameConfig.BoardCols; x++)
+                for (int y = 0; y < GameConfig.BoardRows; y++)
+                {
+                    var q = grid[x, y];
+                    if (q != null && q.HasColor)
+                    {
+                        if (!counts.ContainsKey(q.color)) counts[q.color] = 0;
+                        counts[q.color]++;
+                    }
+                }
+            PieceColor best = PieceColor.Rose; int bestN = -1;
+            foreach (var kv in counts)
+                if (kv.Value > bestN) { bestN = kv.Value; best = kv.Key; }
+            return best;
+        }
+
+        /// <summary>螺旋桨触发一次：目标格加入方案（木箱走直击通道，冰层/棋子走格内清除）。</summary>
+        private void AddPropellerHit(ClearPlan plan)
+        {
+            var t = PickPropellerTarget();
+            if (!InBounds(t.x, t.y)) return;
+            if (HasCrate(t.x, t.y)) plan.propellerDirectHits.Add(t);
+            else plan.cells.Add(t);
+        }
+
+        /// <summary>螺旋桨+炸弹的炸弹落点：优先随机一个关卡目标棋子，否则随机任意棋子。</summary>
+        private Vector2Int PickComboBombTarget()
+        {
+            var goalCells = new List<Vector2Int>();
+            var anyCells = new List<Vector2Int>();
+            for (int x = 0; x < GameConfig.BoardCols; x++)
+                for (int y = 0; y < GameConfig.BoardRows; y++)
+                {
+                    var p = grid[x, y];
+                    if (p == null) continue;
+                    anyCells.Add(new Vector2Int(x, y));
+                    if (p.HasColor && preferredGoalColors.Contains(p.color)) goalCells.Add(new Vector2Int(x, y));
+                }
+            var pool = goalCells.Count > 0 ? goalCells : anyCells;
+            if (pool.Count == 0) return new Vector2Int(rng.Next(GameConfig.BoardCols), rng.Next(GameConfig.BoardRows));
+            return pool[rng.Next(pool.Count)];
         }
 
         /// <summary>结算一次消除方案（移除棋子、伤害障碍、放置新特殊棋子）。</summary>
@@ -642,33 +914,28 @@ namespace StarManor
                 if (ob.hp <= 0) { obstacles[c.x, c.y] = null; result.cratesDestroyed++; }
             }
 
+            // 螺旋桨障碍直击：木箱被螺旋桨命中时 hp-1（冰层走格内清除通道，无需在此处理）
+            foreach (var h in plan.propellerDirectHits)
+            {
+                if (!InBounds(h.x, h.y)) continue;
+                var ob = obstacles[h.x, h.y];
+                if (ob == null) continue;
+                ob.hp--;
+                if (ob.hp <= 0)
+                {
+                    if (ob.kind == "crate") result.cratesDestroyed++;
+                    else result.icesDestroyed++;
+                    obstacles[h.x, h.y] = null;
+                }
+            }
+
             // 放置新特殊棋子
             foreach (var sp in plan.spawns)
             {
                 if (!InBounds(sp.x, sp.y)) continue;
-                if (sp.propellerFlies) continue; // 螺旋桨起飞，不留场
                 grid[sp.x, sp.y] = sp.piece;
             }
             return result;
-        }
-
-        /// <summary>螺旋桨起飞目标格也需清除（由 plan 构建时加入）。</summary>
-        public void AddPropellerTargetToPlan(ClearPlan plan)
-        {
-            foreach (var sp in plan.spawns)
-            {
-                if (!sp.propellerFlies) continue;
-                var t = sp.propellerTarget;
-                if (!InBounds(t.x, t.y)) continue;
-                plan.cells.Add(t);
-                var p = grid[t.x, t.y];
-                if (p != null && p.IsSpecial)
-                {
-                    foreach (var e in DetonationCells(t, p))
-                        if (InBounds(e.x, e.y)) plan.cells.Add(e);
-                }
-            }
-            ExpandChain(plan);
         }
 
         // ---------------------------------------------------------------- 重力与补充
@@ -709,7 +976,7 @@ namespace StarManor
                     {
                         for (int yy = writeY; yy <= segTop; yy++)
                         {
-                            var np = new Piece((PieceColor)rng.Next(6));
+                            var np = new Piece(PoolColor());
                             grid[x, yy] = np;
                             moves.Add(new GravityMove { col = x, fromRow = -1, toRow = yy, piece = np });
                         }
@@ -737,9 +1004,32 @@ namespace StarManor
                         if (!InBounds(nx, ny)) continue;
                         var q = grid[nx, ny];
                         if (q == null) continue;
-                        if (p.IsSpecial || q.IsSpecial) return true; // 特殊棋子参与交换总可激活
+                        if (p.IsSpecial || q.IsSpecial)
+                        {
+                            // 特殊棋子参与交换可激活；对应触发通道全关时不再视为可用走法（防死局误判/漏洗牌）
+                            if (p.IsSpecial && q.IsSpecial)
+                            {
+                                var rp = rules.Get(p.special);
+                                var rq = rules.Get(q.special);
+                                if ((rp.swapSpecials && rq.swapSpecials) || rp.clickActivate || rq.clickActivate)
+                                    return true;
+                            }
+                            else
+                            {
+                                var rs = rules.Get(p.IsSpecial ? p.special : q.special);
+                                if (rs.swapWithNormal || rs.clickActivate) return true;
+                            }
+                        }
                         Swap(x, y, nx, ny);
                         bool ok = HasMatch();
+                        if (!ok)
+                        {
+                            // 主动构造 2×2 同色方块也算可用移动（无三连时所有 2×2 均为独立）
+                            Vector2Int[] quad; PieceColor qc;
+                            var emptyRuns = new List<Vector2Int>();
+                            if (TryGetIndependentQuad(new Vector2Int(nx, ny), emptyRuns, out quad, out qc) ||
+                                TryGetIndependentQuad(new Vector2Int(x, y), emptyRuns, out quad, out qc)) ok = true;
+                        }
                         Swap(x, y, nx, ny);
                         if (ok) return true;
                     }
@@ -789,7 +1079,7 @@ namespace StarManor
             var kind = kinds[rng.Next(kinds.Length)];
             var color = grid[x, y] != null ? grid[x, y].color : PieceColor.Rose;
             grid[x, y] = new Piece(color, kind);
-            return new SpecialSpawn { x = x, y = y, piece = grid[x, y], propellerFlies = false };
+            return new SpecialSpawn { x = x, y = y, piece = grid[x, y] };
         }
 
         public List<Vector2Int> AllPieceCells()
@@ -808,7 +1098,7 @@ namespace StarManor
             var p = grid[x, y];
             if (p == null) return plan;
             plan.cells.Add(new Vector2Int(x, y));
-            foreach (var e in DetonationCells(new Vector2Int(x, y), p))
+            foreach (var e in DetonationCells(new Vector2Int(x, y), p, plan))
                 if (InBounds(e.x, e.y)) plan.cells.Add(e);
             ExpandChain(plan);
             return plan;

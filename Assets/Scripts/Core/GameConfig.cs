@@ -3,7 +3,7 @@ namespace StarManor
     /// <summary>全局配置常量（策划案 §4.3 level_config 核心字段对应）。</summary>
     public static class GameConfig
     {
-        public const int BoardCols = 7;
+        public const int BoardCols = 9;
         public const int BoardRows = 9;
 
         public const int MaxLives = 5;
@@ -22,7 +22,7 @@ namespace StarManor
         public const int DesignWidth = 1170;
         public const int DesignHeight = 2532;
 
-        public const float CellSize = 118f;        // 棋盘格子像素尺寸
+        public const float CellSize = 114f;        // 棋盘格子像素尺寸（9×9 棋盘适配 1170 宽）
         public const float CellGap = 4f;
     }
 
@@ -37,15 +37,15 @@ namespace StarManor
         Orange = 5, // 橙果
     }
 
-    /// <summary>特殊棋子（策划案 §3.2.2）。</summary>
+    /// <summary>特殊棋子（生成与效果规则见 README §2.3）。</summary>
     public enum SpecialKind
     {
         None = 0,
-        RocketRow = 1,  // 火箭·横向（清除整行）
-        RocketCol = 2,  // 火箭·纵向（清除整列）
-        Bomb = 3,       // 炸弹（3x3）
-        Rainbow = 4,    // 彩球（无色）
-        Propeller = 5,  // 螺旋桨（十字 5 格）
+        RocketRow = 1,  // 火箭·横向（四个一列生成；清除整行）
+        RocketCol = 2,  // 火箭·纵向（四个一行生成；清除整列）
+        Bomb = 3,       // 炸弹（L/T 不少于 5 个生成；自身中心 5x5）
+        Rainbow = 4,    // 彩球（5 个一行或一列生成；点击清个数最多的颜色，与普通棋子交换清该颜色）
+        Propeller = 5,  // 螺旋桨（2×2 生成；自动消除场上一个关卡目标相关棋子/障碍 -1）
     }
 
     public static class PieceColorExt

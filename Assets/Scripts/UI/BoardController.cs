@@ -15,6 +15,8 @@ namespace StarManor
         private BoardModel _model;
         private LevelDef _level;
         private State _state = State.Idle;
+        private TestLevelConfig _testCfg;   // 场景内测试配置（仅测试关生效）
+        private bool _fromTestCfg;          // 本局是否由 TestLevelConfig 自定义生成
 
         private int _steps;
         private int _continueUsed;
@@ -47,14 +49,25 @@ namespace StarManor
                 Debug.LogError("[BoardController] 关卡配置缺失: " + GameFlow.Instance.CurrentLevelId);
                 _level = new LevelDef { id = 1, steps = 20, difficulty = "NORMAL", rewardGold = 120 };
             }
-            _steps = _level.steps;
+
+            // 测试关 + 场景内挂了 TestLevelConfig：用自定义目标/步数/颜色池覆盖默认测试关
+            _testCfg = TestLevelConfig.Instance != null
+                ? TestLevelConfig.Instance
+                : FindObjectOfType<TestLevelConfig>();
+            _fromTestCfg = _testCfg != null && _level.test;
+            if (_fromTestCfg) _level = _testCfg.BuildLevelDef();
+
+            _steps = _level.test ? int.MaxValue : _level.steps;
             _continueUsed = SaveSystem.ContinueUsed;
             _continueUsed = 0; // 每次进关重置
 
             _model = new BoardModel(0);
-            foreach (var g in _level.goals)
-                if (g != null && g.type == "collect")
-                    _model.preferredGoalColors.Add(PieceColorExt.FromName(g.color));
+            if (_fromTestCfg) _model.colorPool = _testCfg.BuildColorPool();
+            if (_fromTestCfg) _model.rules = _testCfg.BuildRuleToggles(); // 特殊棋子触发开关仅测试关生效
+            if (_level.goals != null)
+                foreach (var g in _level.goals)
+                    if (g != null && g.type == "collect")
+                        _model.preferredGoalColors.Add(PieceColorExt.FromName(g.color));
             _model.Generate(_level);
 
             BuildUI();
@@ -62,7 +75,24 @@ namespace StarManor
             RefreshGoalUI();
             RefreshStepsUI();
 
-            if (!SaveSystem.UnlimitedLife && SaveSystem.Lives <= 0) ShowNoLifePanel();
+            // 开局结算：按消除优先级先查直线消除（正常生成棋盘不会有），无待消三连时处理自然形成的 2×2 → 螺旋桨
+            var startRuns = _model.FindRuns();
+            if (startRuns.Count > 0)
+            {
+                _state = State.Resolving;
+                StartCoroutine(ExecutePlan(_model.PlanFromRuns(startRuns, new Vector2Int(-9, -9), new Vector2Int(-9, -9))));
+            }
+            else
+            {
+                var startQuad = _model.NextQuadConvertPlan();
+                if (startQuad != null)
+                {
+                    _state = State.Resolving;
+                    StartCoroutine(ExecutePlan(startQuad));
+                }
+            }
+
+            if (!_level.test && !SaveSystem.UnlimitedLife && SaveSystem.Lives <= 0) ShowNoLifePanel();
         }
 
         // ---------------------------------------------------------------- UI 构建
@@ -80,7 +110,10 @@ namespace StarManor
             var top = UIFactory.Panel(_canvas.transform, "TopBar",
                 new Vector2(0, 1), new Vector2(1, 1), new Vector2(0, -170), new Vector2(0, 0),
                 new Color(0f, 0f, 0f, 0.18f));
-            UIFactory.Text(top, "LevelLabel", "第 " + _level.id + " 关" + (_level.difficulty == "HARD" ? "（困难）" : ""),
+            UIFactory.Text(top, "LevelLabel",
+                _fromTestCfg ? "测试关（自定义配置）"
+                    : _level.test ? "测试关（无目标 · 步数无限）"
+                    : "第 " + _level.id + " 关" + (_level.difficulty == "HARD" ? "（困难）" : ""),
                 52, Color.white, new Vector2(600, 70), new Vector2(0, -6));
 
             // 暂停按钮（锚定顶栏右缘，按钮完整落在栏内，文字提示在按钮左侧）
@@ -92,13 +125,15 @@ namespace StarManor
             pauseHint.rectTransform.anchorMin = pauseHint.rectTransform.anchorMax = new Vector2(1f, 0.5f);
             pauseHint.rectTransform.anchoredPosition = new Vector2(-162, 0);
 
-            // 目标栏
+            // 目标栏（测试关无目标：显示提示文字代替）
+            int n = _level.goals != null ? _level.goals.Length : 0;
+            if (n > 0)
+            {
             var goalBar = UIFactory.Panel(_canvas.transform, "GoalBar",
                 new Vector2(0.5f, 1f), new Vector2(0.5f, 1f),
                 new Vector2(-560, -330), new Vector2(560, -190),
                 new Color(0f, 0f, 0f, 0.25f));
             _goalsRow = goalBar;
-            int n = _level.goals != null ? _level.goals.Length : 0;
             for (int i = 0; i < n; i++)
             {
                 var def = _level.goals[i];
@@ -123,6 +158,12 @@ namespace StarManor
                     new Vector2(44, 12), TextAnchor.MiddleLeft);
                 _goals.Add(new GoalProgress { def = def, progress = 0, label = lbl });
             }
+            }
+            else
+            {
+                UIFactory.Text(_canvas.transform, "TestHint", "测试关 · 无目标 · 随意测试", 34,
+                    new Color(1f, 1f, 1f, 0.85f), new Vector2(600, 50), new Vector2(0, -260));
+            }
 
             // 步数
             var stepsRoot = UIFactory.Anchored(_canvas.transform, "Steps", new Vector2(0.5f, 1f), new Vector2(200, 150), new Vector2(0, -430));
@@ -136,7 +177,7 @@ namespace StarManor
             var boardBg = UIFactory.MakeImage(_boardRoot, "BoardBG", SpriteLib.BoardBase(), new Vector2(bw, bh), Vector2.zero, false, false);
             boardBg.color = new Color(1f, 1f, 1f, 0.92f);
 
-            // 7x9 棋盘格底（清理后的浅/深格图，与棋子逐格对齐）
+            // 9x9 棋盘格底（清理后的浅/深格图，与棋子逐格对齐）
             for (int x = 0; x < GameConfig.BoardCols; x++)
                 for (int y = 0; y < GameConfig.BoardRows; y++)
                 {
@@ -271,7 +312,8 @@ namespace StarManor
             if (_state != State.Idle || !isClick) return;
             var p = _model.Get(cell.x, cell.y);
             // Royal Match 规则：单击火箭/炸弹/螺旋桨直接激活（不耗步数）；彩球需与相邻棋子交换触发
-            if (p != null && p.IsSpecial && !p.IsRainbow)
+            // 测试关可通过 TestLevelConfig 按棋子种类关闭单击触发
+            if (p != null && p.IsSpecial && !p.IsRainbow && _model.rules.Get(p.special).clickActivate)
             {
                 ActivateSpecialAt(cell);
                 return;
@@ -279,12 +321,13 @@ namespace StarManor
             if (!_selected.HasValue) SetSelected(cell);
         }
 
-        /// <summary>单击直接引爆特殊棋子（火箭/炸弹/螺旋桨）。不消耗步数。</summary>
+        /// <summary>单击直接激活特殊棋子（火箭/炸弹/螺旋桨/彩球）。不消耗步数。</summary>
         private void ActivateSpecialAt(Vector2Int cell)
         {
             if (_state != State.Idle) return;
             var p = _model.Get(cell.x, cell.y);
-            if (p == null || !p.IsSpecial || p.IsRainbow) return;
+            if (p == null || !p.IsSpecial) return;
+            if (!_model.rules.Get(p.special).clickActivate) return; // 测试关可按棋子种类关闭单击触发
 
             _state = State.Resolving;
             SetSelected(null);
@@ -331,9 +374,10 @@ namespace StarManor
         {
             switch (k)
             {
-                case SpecialKind.RocketRow:
-                case SpecialKind.RocketCol: return "火箭发射！";
+                case SpecialKind.RocketRow: return "横向火箭！消除整行！";
+                case SpecialKind.RocketCol: return "纵向火箭！消除整列！";
                 case SpecialKind.Bomb: return "炸弹引爆！";
+                case SpecialKind.Rainbow: return "彩球发动！";
                 default: return "螺旋桨起飞！";
             }
         }
@@ -417,7 +461,7 @@ namespace StarManor
                 yield break;
             }
 
-            _steps--;
+            if (!_level.test) _steps--; // 测试关步数无限
             RefreshStepsUI();
             SoundManager.Instance.Play("pop");
 
@@ -481,13 +525,20 @@ namespace StarManor
         {
             var plan = firstPlan;
             int guard = 0;
-            while (plan != null && plan.cells.Count > 0 && guard++ < 100)
+            while (plan != null && plan.cells.Count > 0 && guard++ < 200)
             {
-                // 螺旋桨目标格并入方案（此前首次消除方案未并入，导致 2×2 螺旋桨起飞但不消除目标）
-                _model.AddPropellerTargetToPlan(plan);
                 yield return StartCoroutine(ResolvePlan(plan));
+
+                // 消除优先级：先结算直线消除（5连彩球 > 炸弹 > 火箭 > 普通3消），无待消三连时才处理 2×2 自动转化（螺旋桨）
                 var runs = _model.FindRuns();
-                plan = runs.Count > 0 ? _model.PlanFromRuns(runs, new Vector2Int(-9, -9), new Vector2Int(-9, -9)) : null;
+                if (runs.Count > 0)
+                {
+                    plan = _model.PlanFromRuns(runs, new Vector2Int(-9, -9), new Vector2Int(-9, -9));
+                    continue;
+                }
+
+                // 场上自然形成的 2×2 同色方块自动转化为螺旋桨（重力补充后新出现的也会被处理）
+                plan = _model.NextQuadConvertPlan();
             }
         }
 
@@ -525,21 +576,13 @@ namespace StarManor
                 EffectsRunner.Instance.BurstDelayed(_boardRoot, pos, burstSprite, 0.8f, delay);
             }
 
-            // 障碍视图全量刷新（木箱相邻扣血 / 冰层扣层后 HP 标签与销毁都要即时反映）
+            // 障碍视图全量刷新（螺旋桨直击 / 木箱相邻扣血 / 冰层扣层后 HP 标签与销毁都要即时反映）
             foreach (var cell in new List<Vector2Int>(_obstacleViews.Keys))
                 RefreshObstacleView(cell);
-
-            // 螺旋桨起飞表现
-            foreach (var sp in plan.spawns)
-            {
-                if (sp.propellerFlies)
-                    EffectsRunner.Instance.Burst(_boardRoot, CellPos(sp.propellerTarget), SpriteLib.FxSparkle(), 1.2f);
-            }
 
             // 新特殊棋子生成表现
             foreach (var sp in plan.spawns)
             {
-                if (sp.propellerFlies) continue;
                 if (sp.piece == null || !_model.InBounds(sp.x, sp.y)) continue;
                 var oldView = FindViewByPosition(CellPos(new Vector2Int(sp.x, sp.y)));
                 if (oldView != null)
@@ -708,6 +751,12 @@ namespace StarManor
         {
             if (_stepsText != null)
             {
+                if (_level.test)
+                {
+                    _stepsText.text = "∞";
+                    _stepsText.color = Color.white;
+                    return;
+                }
                 _stepsText.text = _steps.ToString();
                 _stepsText.color = _steps <= 5 ? new Color(1f, 0.35f, 0.3f) : Color.white;
             }
@@ -727,7 +776,8 @@ namespace StarManor
         private IEnumerator WinBonusSequence()
         {
             _state = State.Winning;
-            int bonusSteps = _steps;
+            // 测试关步数为 ∞：剩余步数奖励封顶 5，避免胜利演出无限循环
+            int bonusSteps = _level.test ? Mathf.Min(_steps, 5) : _steps;
             _steps = 0;
             RefreshStepsUI();
             if (bonusSteps > 0)
@@ -742,7 +792,6 @@ namespace StarManor
                 _model.MakeBonusSpecialAt(c.x, c.y);
                 yield return new WaitForSeconds(0.12f);
                 var plan = _model.DetonateAt(c.x, c.y);
-                _model.AddPropellerTargetToPlan(plan);
                 if (plan.cells.Count > 0)
                     yield return StartCoroutine(ResolvePlan(plan));
                 // 连锁
@@ -751,7 +800,6 @@ namespace StarManor
                     var runs = _model.FindRuns();
                     if (runs.Count == 0) break;
                     var p = _model.PlanFromRuns(runs, new Vector2Int(-9, -9), new Vector2Int(-9, -9));
-                    _model.AddPropellerTargetToPlan(p);
                     yield return StartCoroutine(ResolvePlan(p));
                 }
             }
@@ -808,7 +856,7 @@ namespace StarManor
         {
             _state = State.Ended;
             SoundManager.Instance.Play("fail");
-            SaveSystem.ConsumeLifeOnFail(); // 失败扣 1 生命（策划案 §6.3）
+            if (!_fromTestCfg) SaveSystem.ConsumeLifeOnFail(); // 失败扣 1 生命（策划案 §6.3）；测试自定义关不扣
 
             var modal = CreateModal("LosePanel");
             StartCoroutine(EffectsRunner.Instance.PopScale(modal.GetComponent<RectTransform>()));

@@ -28,6 +28,7 @@ namespace StarManor
         public int steps;
         public string difficulty; // NORMAL / HARD
         public int rewardGold;
+        public bool test;         // 测试关：无目标、步数无限、不扣生命
         public GoalDef[] goals;
         public CellDef[] crates; // 木箱
         public CellDef[] ices;   // 冰层
@@ -67,6 +68,27 @@ namespace StarManor
         public static int Count
         {
             get { return All != null ? All.Count : 0; }
+        }
+
+        /// <summary>正式关卡数（不含测试关）。</summary>
+        public static int NormalCount
+        {
+            get
+            {
+                int n = 0;
+                if (All != null) foreach (var l in All) if (!l.test) n++;
+                return n;
+            }
+        }
+
+        /// <summary>测试关（test=true 的关卡），无则返回 null。</summary>
+        public static LevelDef TestLevel
+        {
+            get
+            {
+                if (All != null) foreach (var l in All) if (l.test) return l;
+                return null;
+            }
         }
 
         private static void Load()

@@ -345,6 +345,16 @@
           "hp": 1
         }
       ]
+    },
+    {
+      "id": 999,
+      "steps": -1,
+      "difficulty": "NORMAL",
+      "rewardGold": 0,
+      "test": true,
+      "goals": [],
+      "crates": [],
+      "ices": []
     }
   ]
 }
